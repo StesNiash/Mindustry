@@ -7,8 +7,8 @@ import mindustry.entities.*;
 import mindustry.gen.*;
 
 public class PointBulletType extends BulletType{
-     private static float cdist = 0f;
-     private static Unit result;
+     private static final ThreadLocal<Float> cdist = ThreadLocal.withInitial(() -> 0f);
+     private static final ThreadLocal<Unit> result = new ThreadLocal<>();
 
      public float trailSpacing = 10f;
 
@@ -37,8 +37,8 @@ public class PointBulletType extends BulletType{
 
         //calculate hit entity
 
-        cdist = 0f;
-        result = null;
+        cdist.set(0f);
+        result.set(null);
         float range = 1f;
 
         Units.nearbyEnemies(b.team, px - range, py - range, range*2f, range*2f, e -> {
@@ -48,14 +48,14 @@ public class PointBulletType extends BulletType{
             if(!Tmp.r1.contains(px, py)) return;
 
             float dst = e.dst(px, py) - e.hitSize;
-            if((result == null || dst < cdist)){
-                result = e;
-                cdist = dst;
+            if((result.get() == null || dst < cdist.get())){
+                result.set(e);
+                cdist.set(dst);
             }
         });
 
-        if(result != null){
-            b.collision(result, px, py);
+        if(result.get() != null){
+            b.collision(result.get(), px, py);
         }else if(collidesTiles){
             Building build = Vars.world.buildWorld(px, py);
             if(build != null && build.team != b.team){

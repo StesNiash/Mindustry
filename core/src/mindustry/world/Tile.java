@@ -12,6 +12,7 @@ import arc.struct.*;
 import arc.util.*;
 import mindustry.annotations.Annotations.*;
 import mindustry.content.*;
+import mindustry.entities.*;
 import mindustry.game.EventType.*;
 import mindustry.game.*;
 import mindustry.gen.*;
@@ -40,7 +41,7 @@ public class Tile implements Position, QuadTreeObject, Displayable{
     /** Even more data for blocks. Use with caution; any floor/block can access this value. Due to 8-byte alignment of Java objects, this extra 4-byte field can be added with no additional cost.*/
     public int extraData;
     /** Tile entity, usually null. */
-    public @Nullable Building build;
+    public volatile @Nullable Building build;
     public short x, y;
     protected Block block;
     protected Floor floor;
@@ -213,15 +214,18 @@ public class Tile implements Position, QuadTreeObject, Displayable{
     }
 
     public boolean isCenter(){
-        return build == null || build.tile == this;
+        Building b = build;
+        return b == null || b.tile == this;
     }
 
     public int centerX(){
-        return build == null ? x : build.tile.x;
+        Building b = build;
+        return b == null ? x : b.tile.x;
     }
 
     public int centerY(){
-        return build == null ? y : build.tile.y;
+        Building b = build;
+        return b == null ? y : b.tile.y;
     }
 
     public int getTeamID(){

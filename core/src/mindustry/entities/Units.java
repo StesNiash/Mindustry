@@ -17,19 +17,23 @@ import static mindustry.Vars.*;
 
 /** Utility class for unit and team interactions.*/
 public class Units{
-    private static final Rect hitrect = new Rect();
-    private static Unit result;
-    private static float cdist, cpriority;
-    private static int intResult;
-    private static Building buildResult;
+    private static final ThreadLocal<Unit> result = new ThreadLocal<>();
+    private static final ThreadLocal<Float> cdist = ThreadLocal.withInitial(() -> 0f);
+    private static final ThreadLocal<Float> cpriority = ThreadLocal.withInitial(() -> 0f);
+    private static final ThreadLocal<Integer> intResult = new ThreadLocal<>();
+    private static final ThreadLocal<Building> buildResult = new ThreadLocal<>();
+    private static final ThreadLocal<Rect> hitrect = ThreadLocal.withInitial(Rect::new);
 
     //prevents allocations in anyEntities
-    private static boolean anyEntityGround;
-    private static float aeX, aeY, aeW, aeH;
+    private static final ThreadLocal<Boolean> anyEntityGround = ThreadLocal.withInitial(() -> true);
+    private static final ThreadLocal<Float> aeX = ThreadLocal.withInitial(() -> 0f);
+    private static final ThreadLocal<Float> aeY = ThreadLocal.withInitial(() -> 0f);
+    private static final ThreadLocal<Float> aeW = ThreadLocal.withInitial(() -> 0f);
+    private static final ThreadLocal<Float> aeH = ThreadLocal.withInitial(() -> 0f);
     private static final Boolf<Unit> anyEntityLambda = unit -> {
-        if((unit.isGrounded() && !unit.type.allowLegStep) == anyEntityGround){
-            unit.hitboxTile(hitrect);
-            return hitrect.overlaps(aeX, aeY, aeW, aeH);
+        if((unit.isGrounded() && !unit.type.allowLegStep) == anyEntityGround.get()){
+            unit.hitboxTile(hitrect.get());
+            return hitrect.get().overlaps(aeX.get(), aeY.get(), aeW.get(), aeH.get());
         }
         return false;
     };
@@ -186,11 +190,11 @@ public class Units{
     }
 
     public static boolean anyEntities(float x, float y, float width, float height, boolean ground){
-        anyEntityGround = ground;
-        aeX = x;
-        aeY = y;
-        aeW = width;
-        aeH = height;
+        anyEntityGround.set(ground);
+        aeX.set(x);
+        aeY.set(y);
+        aeW.set(width);
+        aeH.set(height);
 
         return nearbyCheck(x, y, width, height, anyEntityLambda);
     }
@@ -200,9 +204,9 @@ public class Units{
 
         return nearbyCheck(x, y, width, height, unit -> {
             if(check.get(unit)){
-                unit.hitboxTile(hitrect);
+                unit.hitboxTile(hitrect.get());
 
-                return hitrect.overlaps(x, y, width, height);
+                return hitrect.get().overlaps(x, y, width, height);
             }
             return false;
         });
@@ -227,23 +231,23 @@ public class Units{
 
     /** @return the closest building of the provided team that matches the predicate. */
     public static @Nullable Building closestBuilding(Team team, float wx, float wy, float range, Boolf<Building> pred){
-        buildResult = null;
-        cdist = 0f;
+        buildResult.set(null);
+        cdist.set(0f);
 
         var buildings = team.data().buildingTree;
         if(buildings == null) return null;
         buildings.intersect(wx - range, wy - range, range*2f, range*2f, b -> {
             if(pred.get(b)){
                 float dst = b.dst(wx, wy) - b.hitSize()/2f;
-                if(dst <= range && (buildResult == null || dst <= cdist)){
-                    cdist = dst;
-                    buildResult = b;
+                if(dst <= range && (buildResult.get() == null || dst <= cdist.get())){
+                    cdist.set(dst);
+                    buildResult.set(b);
                 }
             }
         });
 
-        var result = buildResult;
-        buildResult = null;
+        var result = buildResult.get();
+        buildResult.set(null);
 
         return result;
     }
@@ -296,117 +300,117 @@ public class Units{
     public static Unit closestEnemy(Team team, float x, float y, float range, Boolf<Unit> predicate){
         if(team == Team.derelict) return null;
 
-        result = null;
-        cdist = 0f;
-        cpriority = -99999f;
+        result.set(null);
+        cdist.set(0f);
+        cpriority.set(-99999f);
 
         nearbyEnemies(team, x - range, y - range, range*2f, range*2f, e -> {
             if(e.dead() || !predicate.get(e) || e.team == Team.derelict || !e.targetable(team) || e.inFogTo(team)) return;
 
             float dst2 = e.dst2(x, y) - (e.hitSize * e.hitSize);
-            if(dst2 < range*range && (result == null || dst2 < cdist || e.type.targetPriority > cpriority) && e.type.targetPriority >= cpriority){
-                result = e;
-                cdist = dst2;
-                cpriority = e.type.targetPriority;
+            if(dst2 < range*range && (result.get() == null || dst2 < cdist.get() || e.type.targetPriority > cpriority.get()) && e.type.targetPriority >= cpriority.get()){
+                result.set(e);
+                cdist.set(dst2);
+                cpriority.set(e.type.targetPriority);
             }
         });
 
-        return result;
+        return result.get();
     }
 
     /** Returns the closest enemy of this team using a custom comparison function. Filter by predicate. */
     public static Unit bestEnemy(Team team, float x, float y, float range, Boolf<Unit> predicate, Sortf sort){
         if(team == Team.derelict) return null;
 
-        result = null;
-        cdist = 0f;
-        cpriority = -99999f;
+        result.set(null);
+        cdist.set(0f);
+        cpriority.set(-99999f);
 
         nearbyEnemies(team, x - range, y - range, range*2f, range*2f, e -> {
             if(e.dead() || !predicate.get(e) || e.team == Team.derelict || !e.within(x, y, range + e.hitSize/2f) || !e.targetable(team) || e.inFogTo(team)) return;
 
             float cost = sort.cost(e, x, y);
-            if((result == null || cost < cdist || e.type.targetPriority > cpriority) && e.type.targetPriority >= cpriority){
-                result = e;
-                cdist = cost;
-                cpriority = e.type.targetPriority;
+            if((result.get() == null || cost < cdist.get() || e.type.targetPriority > cpriority.get()) && e.type.targetPriority >= cpriority.get()){
+                result.set(e);
+                cdist.set(cost);
+                cpriority.set(e.type.targetPriority);
             }
         });
 
-        return result;
+        return result.get();
     }
 
     /** Returns the closest ally of this team. Filter by predicate. No range. */
     public static Unit closest(Team team, float x, float y, Boolf<Unit> predicate){
-        result = null;
-        cdist = 0f;
+        result.set(null);
+        cdist.set(0f);
 
         for(Unit e : Groups.unit){
             if(!predicate.get(e) || e.team() != team) continue;
 
             float dist = e.dst2(x, y);
-            if(result == null || dist < cdist){
-                result = e;
-                cdist = dist;
+            if(result.get() == null || dist < cdist.get()){
+                result.set(e);
+                cdist.set(dist);
             }
         }
 
-        return result;
+        return result.get();
     }
 
     /** Returns the closest ally of this team in a range. Filter by predicate. */
     public static Unit closest(Team team, float x, float y, float range, Boolf<Unit> predicate){
-        result = null;
-        cdist = 0f;
+        result.set(null);
+        cdist.set(0f);
 
         nearby(team, x, y, range, e -> {
             if(!e.isValid() || !predicate.get(e)) return;
 
             float dist = e.dst2(x, y);
-            if(result == null || dist < cdist){
-                result = e;
-                cdist = dist;
+            if(result.get() == null || dist < cdist.get()){
+                result.set(e);
+                cdist.set(dist);
             }
         });
 
-        return result;
+        return result.get();
     }
 
     /** Returns the closest ally of this team in a range. Filter by predicate. */
     public static Unit closest(Team team, float x, float y, float range, Boolf<Unit> predicate, Sortf sort){
-        result = null;
-        cdist = 0f;
+        result.set(null);
+        cdist.set(0f);
 
         nearby(team, x, y, range, e -> {
             if(!e.isValid() || !predicate.get(e)) return;
 
             float dist = sort.cost(e, x, y);
-            if(result == null || dist < cdist){
-                result = e;
-                cdist = dist;
+            if(result.get() == null || dist < cdist.get()){
+                result.set(e);
+                cdist.set(dist);
             }
         });
 
-        return result;
+        return result.get();
     }
 
     /** Returns the closest ally of this team. Filter by predicate.
      * Unlike the closest() function, this only guarantees that unit hitboxes overlap the range. */
     public static Unit closestOverlap(Team team, float x, float y, float range, Boolf<Unit> predicate){
-        result = null;
-        cdist = 0f;
+        result.set(null);
+        cdist.set(0f);
 
         nearby(team, x - range, y - range, range*2f, range*2f, e -> {
             if(!e.isValid() || !predicate.get(e)) return;
 
             float dist = e.dst2(x, y);
-            if(result == null || dist < cdist){
-                result = e;
-                cdist = dist;
+            if(result.get() == null || dist < cdist.get()){
+                result.set(e);
+                cdist.set(dist);
             }
         });
 
-        return result;
+        return result.get();
     }
 
     /** @return whether any units exist in this square (centered) */
@@ -416,13 +420,13 @@ public class Units{
 
     /** @return whether any units exist in this rectangle */
     public static int count(float x, float y, float width, float height, Boolf<Unit> filter){
-        intResult = 0;
+        intResult.set(0);
         Groups.unit.intersect(x, y, width, height, v -> {
             if(filter.get(v)){
-                intResult ++;
+                intResult.set(intResult.get() + 1);
             }
         });
-        return intResult;
+        return intResult.get();
     }
 
     /** @return whether any units exist in this rectangle */

@@ -10,6 +10,7 @@ import arc.util.pooling.*;
 import mindustry.gen.*;
 
 import java.util.*;
+import java.util.concurrent.*;
 
 import static mindustry.Vars.*;
 
@@ -17,6 +18,26 @@ import static mindustry.Vars.*;
 @SuppressWarnings("unchecked")
 public class EntityGroup<T extends Entityc> implements Iterable<T>{
     private static int lastId = 0;
+
+    private static final ConcurrentLinkedQueue<Runnable> deferredActions = new ConcurrentLinkedQueue<>();
+    private static volatile boolean deferring = false;
+
+    /** If currently in a parallel update, defers the action to be run sequentially after all threads finish.
+     *  Otherwise runs it immediately. */
+    public static void defer(Runnable action){
+        if(deferring){
+            deferredActions.add(action);
+        }else{
+            action.run();
+        }
+    }
+
+    private static void flushDeferred(){
+        Runnable r;
+        while((r = deferredActions.poll()) != null){
+            r.run();
+        }
+    }
 
     private final Seq<T> array;
     private final Seq<T> intersectArray = new Seq<>();
@@ -28,6 +49,8 @@ public class EntityGroup<T extends Entityc> implements Iterable<T>{
     private boolean clearing;
 
     private int index;
+
+    private final Object updateLock = new Object();
 
     private double fixedCounter, timeCounter;
     private long lastTimeAccess = -1;
@@ -88,6 +111,45 @@ public class EntityGroup<T extends Entityc> implements Iterable<T>{
     public void update(){
         for(index = 0; index < array.size; index++){
             array.items[index].update();
+        }
+    }
+
+    /**
+     * Splits the array into chunks and processes them concurrently using the main executor.
+     * Uses at most {@code maxThreads} threads, leaving at least one core free for the main/GL thread.
+     * Only beneficial when there are many entities (at least {@code maxThreads * 4}).
+     */
+    public void updateParallel(){
+        int maxThreads = Math.max(1, Math.min(OS.cores - 2, 8));
+        int size = array.size;
+
+        if(size < maxThreads * 4 || maxThreads <= 1){
+            update();
+            return;
+        }
+
+        int chunkSize = (size + maxThreads - 1) / maxThreads;
+        int threads = (size + chunkSize - 1) / chunkSize;
+        Seq<Future<?>> futures = new Seq<>(threads);
+
+        for(int i = 0; i < threads; i++){
+            int start = i * chunkSize;
+            int end = Math.min(start + chunkSize, size);
+            if(start >= end) continue;
+
+            futures.add(Core.executor.submit(() -> {
+                for(int j = start; j < end; j++){
+                    array.items[j].update();
+                }
+            }));
+        }
+
+        for(var future : futures){
+            try{
+                future.get();
+            }catch(ExecutionException | InterruptedException e){
+                throw new RuntimeException(e);
+            }
         }
     }
 
@@ -246,10 +308,12 @@ public class EntityGroup<T extends Entityc> implements Iterable<T>{
 
     public void add(T type){
         if(type == null) throw new RuntimeException("Cannot add a null entity!");
-        array.add(type);
+        synchronized(updateLock){
+            array.add(type);
 
-        if(mappingEnabled()){
-            map.put(type.id(), type);
+            if(mappingEnabled()){
+                map.put(type.id(), type);
+            }
         }
     }
 
@@ -262,23 +326,25 @@ public class EntityGroup<T extends Entityc> implements Iterable<T>{
     public void remove(T type){
         if(clearing) return;
         if(type == null) throw new RuntimeException("Cannot remove a null entity!");
-        int idx = array.indexOf(type, true);
-        if(idx != -1){
-            array.remove(idx);
+        synchronized(updateLock){
+            int idx = array.indexOf(type, true);
+            if(idx != -1){
+                array.remove(idx);
 
-            //fix incorrect HEAD index since it was swapped
-            if(array.size > 0 && idx != array.size){
-                var swapped = array.items[idx];
-                if(indexer != null) indexer.change(swapped, idx);
-            }
+                //fix incorrect HEAD index since it was swapped
+                if(array.size > 0 && idx != array.size){
+                    var swapped = array.items[idx];
+                    if(indexer != null) indexer.change(swapped, idx);
+                }
 
-            if(map != null){
-                map.remove(type.id());
-            }
+                if(map != null){
+                    map.remove(type.id());
+                }
 
-            //fix iteration index when removing
-            if(index >= idx){
-                index --;
+                //fix iteration index when removing
+                if(index >= idx){
+                    index --;
+                }
             }
         }
     }
@@ -286,31 +352,33 @@ public class EntityGroup<T extends Entityc> implements Iterable<T>{
     public void removeIndex(T type, int position){
         if(clearing) return;
         if(type == null) throw new RuntimeException("Cannot remove a null entity!");
-        if(position != -1 && position < array.size){
+        synchronized(updateLock){
+            if(position != -1 && position < array.size){
 
-            //rarely the entity index is wrong; fallback to slow implementation
-            if(array.items[position] != type){
-                remove(type);
-                return;
-            }
+                //rarely the entity index is wrong; fallback to slow implementation
+                if(array.items[position] != type){
+                    remove(type);
+                    return;
+                }
 
-            //swap head with current
-            if(array.size > 1){
-                var head = array.items[array.size - 1];
-                if(indexer != null) indexer.change(head, position);
-                array.items[position] = head;
-            }
+                //swap head with current
+                if(array.size > 1){
+                    var head = array.items[array.size - 1];
+                    if(indexer != null) indexer.change(head, position);
+                    array.items[position] = head;
+                }
 
-            array.size --;
-            array.items[array.size] = null;
+                array.size --;
+                array.items[array.size] = null;
 
-            if(map != null){
-                map.remove(type.id());
-            }
+                if(map != null){
+                    map.remove(type.id());
+                }
 
-            //fix iteration index when removing
-            if(index >= position){
-                index --;
+                //fix iteration index when removing
+                if(index >= position){
+                    index --;
+                }
             }
         }
     }

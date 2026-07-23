@@ -471,7 +471,7 @@ public class Logic implements ApplicationListener{
         PerfCounter.entityMisc.end();
 
         PerfCounter.unitUpdate.begin();
-        Groups.unit.update();
+        Groups.unit.updateParallel();
         PerfCounter.unitUpdate.end();
 
         PerfCounter.powerUpdate.begin();
@@ -479,7 +479,7 @@ public class Logic implements ApplicationListener{
         PerfCounter.powerUpdate.end();
 
         PerfCounter.buildingUpdate.begin();
-        if(!state.isEditor()) Groups.build.update();
+        if(!state.isEditor()) Groups.build.updateParallel();
         PerfCounter.buildingUpdate.end();
 
         PerfCounter.bulletUpdate.begin();
